@@ -9,24 +9,26 @@
 #define THREADS	4
 #define debug(f,a...)	do{}while(0)
 #else
-#define DEBUG
+//#define DEBUG
 #define THREADS	1
 #define debug(f,a...)	printf("%s.%d."f,__func__, __LINE__,##a)
 #endif
 #define error(f,a...)	printf("%s.%d."f,__func__, __LINE__,##a)
 
 
-#define list_init(l)		{(l)->next = (l)->prev = (l);}
-#define list_add_before(to,new)	{ \
-	(to)->prev->next = (new); \
-	(new)->prev = (to)->prev; \
-	(to)->prev = (new); \
-	(new)->next = (to); \
+#define list_next(j,l)			(j->city_list[(l)->number].next)
+#define list_prev(j,l)			(j->city_list[(l)->number].prev)
+#define list_init(j,l)			{list_next(j,l) = list_prev(j,l) = (l);}
+#define list_add_before(j,to,new)	{ \
+	list_next(j,list_prev(j,to)) = (new); \
+	list_prev(j,new) = list_prev(j,to); \
+	list_prev(j,to) = (new); \
+	list_next(j,new) = (to); \
 }
-#define list_remove(l)	{ \
-	(l)->prev->next = (l)->next; \
-	(l)->next->prev = (l)->prev; \
-	(l)->next = (l)->prev = NULL; \
+#define list_remove(j, l)	{ \
+	list_next(j,list_prev(j,l)) = list_next(j,l); \
+	list_prev(j,list_next(j,l)) = list_prev(j,l); \
+	list_next(j,l) = list_prev(j,l) = NULL; \
 }
 
 struct city;
@@ -39,6 +41,12 @@ struct link
 	struct city *to;
 };
 
+struct city_list
+{
+	struct city *next;
+	struct city *prev;
+};
+
 struct city
 {
 	int number;
@@ -47,20 +55,13 @@ struct city
 	int link_count;
 
 	int search_distance;
-
-	int distance_down;
-	int distance_up;
-	struct city *next;
-	struct city *prev;
 };
 
 struct question
 {
 	struct city *c1, *c2;
 
-	int cross_distance;
-	int city1_distance_down;
-	int city1_distance_up;
+	int count;
 };
 
 struct jobcontrol;
@@ -70,14 +71,17 @@ struct jobarg
 	int number;
 	int running;
 	struct jobcontrol *jc;
-	int result1;
-	int result2;
+	unsigned long long result1;
+	unsigned long long result2;
 
 	int N, Q;
 	int M;
 	int *distance_to1;
 	struct question *question;
 	struct city *city;
+	unsigned int *distance_down;
+	unsigned int *distance_up;
+	struct city_list *city_list;
 };
 
 struct jobcontrol
@@ -116,7 +120,7 @@ int add_link (int length, struct city *c1, struct city *c2)
 	return 0;
 }
 
-int search_shortest (struct jobarg *j, struct question *q)
+int search_before1 (struct jobarg *j, struct question *q)
 {
 	int a;
 	int leaf_num;
@@ -131,71 +135,68 @@ int search_shortest (struct jobarg *j, struct question *q)
 		return 0;
 
 	/* reset parameter */
-	for (a=0; a<j->N; a++)
-	{
-		j->city[a].distance_down = -1;
-		j->city[a].distance_up = -1;
-	}
+	memset (j->distance_down, 0xff, sizeof(j->distance_down[0])*j->N);
 
 	/* down to city1 from start(c1) */
-	c1->distance_down = 0;
+	j->distance_down[c1->number] = 0;
 	c = c1;
 	while (c->link_down)
 	{
 		struct city *n;
 
 		n = c->link_down->to;
-		n->distance_down = c->distance_down + c->link_down->length;
-		debug ("down %d -> %d(%d)\n", c->number+1, n->number+1, n->distance_down);
+		j->distance_down[n->number] =
+			j->distance_down[c->number] + c->link_down->length;
 
 		c = n;
 	}
 
+	return 0;
+}
+
+int search_before2 (struct jobarg *j, struct question *q)
+{
+	int a;
+	int leaf_num;
+	struct city *c1 = q->c1;
+	struct city *c2 = q->c2;
+	struct city *c;
+	int distance;
+
+	debug ("search city%d to city%d\n", c1->number+1, c2->number+1);
+
+	if (c1 == c2)
+		return 0;
+
+	if (j->distance_down[c2->number] != UINT_MAX)
+		return j->distance_down[c2->number];
+
 	/* up to end(c2) from city1 */
-	c2->distance_up = 0;
-	if (c2->distance_down >= 0)
-		cross = c2;
+	distance = 0;
 	c = c2;
 	while (c->link_down)
 	{
 		struct city *n;
 
 		n = c->link_down->to;
-		n->distance_up = c->distance_up + c->link_down->length;
-#if 0
-		debug ("up %d -> %d(down:%d, up:%d)\n", c->number+1, n->number+1,
-				n->distance_down,
-				n->distance_up);
-#endif
+		distance += c->link_down->length;
 
-		if (!cross && n->distance_down >= 0)
-			cross = n;
+		if (j->distance_down[n->number] != UINT_MAX)
+			return j->distance_down[n->number] + distance;
 
 		c = n;
 	}
 
-	if (!cross)
-	{
-		error ("no path??\n");
-		exit (1);
-	}
-
-	q->cross_distance = cross->distance_down + cross->distance_up;
-	q->city1_distance_down = j->city[0].distance_down;
-	q->city1_distance_up = j->city[0].distance_up;
-
-	debug ("distance %d\n", q->cross_distance);
-	return q->cross_distance;
+	error ("no path??\n");
+	exit (1);
 }
 
-int search_shortest2 (struct jobarg *j, struct question *q)
+int search_step1 (struct jobarg *j, struct question *q)
 {
 	int a;
 	struct city *c1 = q->c1;
 	struct city *c2 = q->c2;
 	struct city *now;
-	int shortest;
-	int got_city1;
 
 	debug ("search city%d to city%d\n", c1->number+1, c2->number+1);
 
@@ -203,17 +204,13 @@ int search_shortest2 (struct jobarg *j, struct question *q)
 		return 0;
 
 	/* reset parameter */
-	for (a=0; a<j->N; a++)
-	{
-		j->city[a].distance_down = INT_MAX;
-		j->city[a].next = j->city[a].prev =  NULL;
-	}
+	memset (j->city_list, 0, sizeof (j->city_list[0]) * j->N);
+	memset (j->distance_down, 0xff, sizeof (j->distance_down[0]) * j->N);
 
 	/* down to city1 from start(c1) */
-	c1->distance_down = 0;
+	j->distance_down[c1->number] = 0;
 	now = c1;
-	list_init (now);
-	got_city1 = 0;
+	list_init (j, now);
 	while (1)
 	{
 		struct city *n;
@@ -222,83 +219,75 @@ int search_shortest2 (struct jobarg *j, struct question *q)
 
 #if 1
 		if (now == j->city+0)
+#else
+		if (0)
+#endif
 		{
 			debug ("we got city1. break\n");
 			t = now;
 			while (1)
 			{
-				t = t->next;
+				t = list_next (j, t);
 				if (t == now)
 					break;
 
 				debug ("delete unclear distance city%d\n", t->number+1);
-				t->distance_down = INT_MAX;
+				j->distance_down[t->number] = UINT_MAX;
 			}
+
 			break;
 		}
-#endif
 		debug ("spread from city%d\n", now->number+1);
 
-		if (!got_city1 && now == c2)
+		if (now == c2)
 		{
-#if 1
 			debug ("we got destination. distance %d\n",
-					now->distance_down);
-#endif
-			return now->distance_down;
+					j->distance_down[now->number]);
+			return j->distance_down[now->number];
 		}
 
-#if 0
-		if (now == j->city+0)
+		l = now->link;
+		while (l)
 		{
-			got_city1 = 1;
-		}
-		else
-#endif
-		{
-			l = now->link;
-			while (l)
+			struct city *leaf;
+			int dist;
+
+			leaf = l->to;
+			dist = j->distance_down[now->number] + l->length;
+
+			if (j->distance_down[leaf->number] < dist)
 			{
-				struct city *leaf;
-				int dist;
-
-				leaf = l->to;
-				dist = now->distance_down + l->length;
-
-				if (leaf->distance_down < dist)
-				{
-					l = l->next;
-					continue;
-				}
-				leaf->distance_down = dist;
-				if (leaf->next)
-					list_remove (leaf);
-
-				debug ("leaf city%d(%d)\n", leaf->number+1, leaf->distance_down);
-
-				t = now;
-				while (t)
-				{
-					if (t->distance_down > dist)
-						break;
-					t = t->next;
-					if (t == now)
-						break;
-				}
-				list_add_before (t, leaf);
-
 				l = l->next;
+				continue;
 			}
+			j->distance_down[leaf->number] = dist;
+			if (list_next (j, leaf))
+				list_remove (j, leaf);
+
+			debug ("leaf city%d(%d)\n", leaf->number+1, j->distance_down[leaf->number]);
+
+			t = now;
+			while (t)
+			{
+				if (j->distance_down[t->number] > dist)
+					break;
+				t = list_next (j, t);
+				if (t == now)
+					break;
+			}
+			list_add_before (j, t, leaf);
+
+			l = l->next;
 		}
 
-		n = now->next;
-		list_remove (now);
+		n = list_next (j, now);
+		list_remove (j, now);
 		now = n;
 
-		if (!now->next)
+		if (!list_next (j, now))
 		{
-			debug ("no more..\n");
-			break;
+			error ("no path??\n");
+			exit (1);
 		}
 
 #ifdef DEBUG
@@ -306,28 +295,37 @@ int search_shortest2 (struct jobarg *j, struct question *q)
 		while (t)
 		{
 			debug ("current spread list. city%d(%d)\n",
-					t->number+1, t->distance_down);
+					t->number+1, j->distance_down[t->number]);
 
-			t = t->next;
+			t = list_next (j, t);
 			if (t == now)
 				break;
 		}
 #endif
 	}
 
+	debug ("need step2\n");
+	return -1;
+}
+
+int search_step2 (struct jobarg *j, struct question *q)
+{
+	int a;
+	struct city *c1 = q->c1;
+	struct city *c2 = q->c2;
+	struct city *now;
+
+	debug ("search city%d to city%d\n", c1->number+1, c2->number+1);
+
 	/* reset parameter */
-	for (a=0; a<j->N; a++)
-	{
-		j->city[a].distance_up = INT_MAX;
-		j->city[a].next = j->city[a].prev =  NULL;
-	}
+	memset (j->city_list, 0, sizeof (j->city_list[0]) * j->N);
+	memset (j->distance_up, 0xff, sizeof (j->distance_up[0]) * j->N);
 
 	/* up to city2 from start(c1) */
 	debug ("spread from backward...\n");
-	c2->distance_up = 0;
+	j->distance_up[c2->number] = 0;
 	now = c2;
-	list_init (now);
-	shortest = INT_MAX;
+	list_init (j, now);
 	while (now)
 	{
 		struct city *n;
@@ -336,53 +334,34 @@ int search_shortest2 (struct jobarg *j, struct question *q)
 
 		debug ("spread from city%d\n", now->number+1);
 
-#if 1
-		if (now->distance_down != INT_MAX)
+		if (j->distance_down[now->number] != UINT_MAX)
 		{
+			int shortest;
+
 			debug ("we got cross. distance %d, %d\n",
-					now->distance_down,
-					now->distance_up);
-#if 0
-			if (shortest > now->distance_down + now->distance_up)
-				shortest = now->distance_down + now->distance_up;
-#else
+					j->distance_down[now->number],
+					j->distance_up[now->number]);
 			shortest = INT_MAX;
 			t = now;
 			while (t)
 			{
 				int dist;
 
-				if (t->distance_down != INT_MAX &&
-						t->distance_up != INT_MAX)
+				if (j->distance_down[t->number] != UINT_MAX &&
+						j->distance_up[t->number] != UINT_MAX)
 				{
-					dist = t->distance_down + t->distance_up;
+					dist = j->distance_down[t->number] + j->distance_up[t->number];
 					if (shortest > dist)
 						shortest = dist;
 				}
 
-				t = t->next;
+				t = j->city_list[t->number].next;
 				if (t == now)
 					break;
 			}
 			debug ("distance %d\n", shortest);
 			return shortest;
-#endif
 		}
-#endif
-
-#if 0
-		if (now == c1)
-		{
-			debug ("we got destination. distance %d\n",
-					now->distance_up);
-			return now->distance_up;
-		}
-#endif
-
-#if 0
-		if (shortest != INT_MAX && now->distance_down != INT_MAX)
-			return shortest;
-#endif
 
 		if (now != j->city+0)
 		{
@@ -393,39 +372,40 @@ int search_shortest2 (struct jobarg *j, struct question *q)
 				int dist;
 
 				leaf = l->to;
-				dist = now->distance_up + l->length;
+				dist = j->distance_up[now->number] + l->length;
 
-				if (leaf->distance_up < dist)
+				if (j->distance_up[leaf->number] < dist)
 				{
 					l = l->next;
 					continue;
 				}
-				leaf->distance_up = dist;
-				if (leaf->next)
-					list_remove (leaf);
+				j->distance_up[leaf->number] = dist;
+				if (j->city_list[leaf->number].next)
+					list_remove (j, leaf);
 
-				debug ("leaf city%d(%d)\n", leaf->number+1, leaf->distance_up);
+				debug ("leaf city%d(%d)\n",
+						leaf->number+1, j->distance_up[leaf->number]);
 
 				t = now;
 				while (t)
 				{
-					if (t->distance_up > dist)
+					if (j->distance_up[t->number] > dist)
 						break;
-					t = t->next;
+					t = j->city_list[t->number].next;
 					if (t == now)
 						break;
 				}
-				list_add_before (t, leaf);
+				list_add_before (j, t, leaf);
 
 				l = l->next;
 			}
 		}
 
-		n = now->next;
-		list_remove (now);
+		n = j->city_list[now->number].next;
+		list_remove (j, now);
 		now = n;
 
-		if (!now->next)
+		if (!j->city_list[now->number].next)
 		{
 			debug ("no more..\n");
 			break;
@@ -436,36 +416,17 @@ int search_shortest2 (struct jobarg *j, struct question *q)
 		while (t)
 		{
 			debug ("current spread list. city%d(%d)\n",
-					t->number+1, t->distance_up);
+					t->number+1, j->distance_up[t->number]);
 
-			t = t->next;
+			t = j->city_list[t->number].next;
 			if (t == now)
 				break;
 		}
 #endif
 	}
 
-	shortest = INT_MAX;
-	for (a=0; a<j->N; a++)
-	{
-		if (j->city[a].distance_down != INT_MAX &&
-				j->city[a].distance_up != INT_MAX)
-		{
-			int dist;
-
-			dist = j->city[a].distance_down +
-				j->city[a].distance_up;
-
-			if (shortest > dist)
-			{
-				c1 = j->city+a;
-				shortest = dist;
-			}
-		}
-	}
-
-	debug ("shortest %d crossing city%d\n", shortest, c1->number+1);
-	return shortest;
+	error ("no path?\n");
+	exit (1);
 }
 
 void * jobthread (void *arg)
@@ -475,10 +436,43 @@ void * jobthread (void *arg)
 	int a;
 	int q, m;
 
-	for (q=0; q<j->Q; q++)
-		j->result1 +=
-			search_shortest (j, j->question+q);
+	int step1_done;
+	int pre_c1_num;
 
+	/* before bridge construction */
+	step1_done = 0;
+	pre_c1_num = -1;
+	for (q=0; q<j->Q; q++)
+	{
+		int dist;
+
+		debug ("before check city%d, city%d, step1done%d\n",
+				j->question[q].c1->number+1,
+				j->question[q].c2->number+1,
+				step1_done);
+
+		if (pre_c1_num != j->question[q].c1->number)
+			step1_done = 0;
+
+		if (j->question[q].c1 == j->question[q].c2)
+			dist = 0;
+		else
+		{
+			if (!step1_done)
+			{
+				search_before1 (j, j->question+q);
+				step1_done = 1;
+			}
+
+			dist = search_before2 (j, j->question+q);
+		}
+
+		j->result1 += dist*j->question[q].count;
+
+		pre_c1_num = j->question[q].c1->number;
+	}
+
+	/* bridge construction */
 	m = 0;
 	for (a=1; a<j->N; a++)
 	{
@@ -518,14 +512,46 @@ void * jobthread (void *arg)
 		}
 	}
 
+	/* after */
+	step1_done = 0;
+	pre_c1_num = -1;
 	for (q=0; q<j->Q; q++)
-		j->result2 +=
-			search_shortest2 (j, j->question+q);
+	{
+		int dist;
+
+		debug ("after check city%d, city%d, step1done%d\n",
+				j->question[q].c1->number+1,
+				j->question[q].c2->number+1,
+				step1_done);
+
+		if (pre_c1_num != j->question[q].c1->number)
+			step1_done = 0;
+
+		if (j->question[q].c1 == j->question[q].c2)
+			dist = 0;
+		else
+		{
+			dist = -1;
+			if (!step1_done)
+			{
+				dist = search_step1 (j, j->question+q);
+				if (dist < 0)
+					step1_done = 1;
+			}
+
+			if (dist < 0)
+				dist = search_step2 (j, j->question+q);
+		}
+
+		j->result2 += dist*j->question[q].count;
+
+		pre_c1_num = j->question[q].c1->number;
+	}
 
 
 	pthread_mutex_lock (&j->jc->lock);
 	j->running = 0;
-	printf ("%d. %d, %d\n", j->number, j->result1, j->result2);
+	printf ("%d. %llu, %llu\n", j->number, j->result1, j->result2);
 	pthread_mutex_unlock (&j->jc->lock);
 	pthread_cond_signal (&j->jc->jobdone);
 
@@ -549,6 +575,17 @@ void * jobthread (void *arg)
 	return 0;
 }
 
+int comp_question (const void *a1, const void *a2)
+{
+	struct question *q1 = (void*)a1;
+	struct question *q2 = (void*)a2;
+
+	if (q1->c1->number == q2->c1->number)
+		return q1->c2->number - q2->c2->number;
+
+	return q1->c1->number - q2->c1->number;
+}
+
 int more_job (struct jobcontrol *jc)
 {
 	struct jobarg *j;
@@ -566,6 +603,10 @@ int more_job (struct jobcontrol *jc)
 	printf ("%d. new job. N %d, Q %d\n", jn, j->N, j->Q);
 
 	j->city = calloc (j->N, sizeof (j->city[0]));
+	j->distance_down = calloc (j->N, sizeof (j->distance_down[0]));
+	j->distance_up = calloc (j->N, sizeof (j->distance_up[0]));
+	j->city_list = calloc (j->N, sizeof (j->city_list[0]));
+
 	for (a=0; a<j->N; a++)
 	{
 		int num, dis;
@@ -607,8 +648,52 @@ int more_job (struct jobcontrol *jc)
 			exit (1);
 		}
 
+		if (n1 < n2)
+		{
+			int t;
+
+			t = n1;
+			n1 = n2;
+			n2 = t;
+		}
+
 		j->question[a].c1 = j->city+n1-1;
 		j->question[a].c2 = j->city+n2-1;
+		j->question[a].count = 1;
+
+	}
+	{
+		int q_count;
+		struct question *pre_q;
+
+		/* sort questions to speed up */
+		qsort (j->question, j->Q, sizeof (j->question[0]),
+				comp_question);
+
+#if 0
+		/* count and remove same questions */
+		pre_q = j->question+0;
+		q_count = 1;
+		for (a=1; a<j->Q; a++)
+		{
+			if (
+					pre_q->c1 == j->question[a].c1 &&
+					pre_q->c2 == j->question[a].c2
+			   )
+			{
+				pre_q->count ++;
+			}
+			else
+			{
+				q_count ++;
+				pre_q ++;
+				*pre_q = j->question[a];
+			}
+		}
+
+		printf ("question %d to %d\n", j->Q, q_count);
+		j->Q = q_count;
+#endif
 	}
 
 	j->number = jn;
@@ -703,8 +788,8 @@ int main (int argc, char **argv)
 
 	for (i=0; i<jc->T; i++)
 	{
-		printf ("%d. result %d, %d\n", i, jc->arg[i].result1, jc->arg[i].result2);
-		fprintf (jc->out, "%d %d\n", jc->arg[i].result1, jc->arg[i].result2);
+		printf ("%d. result %llu, %llu\n", i, jc->arg[i].result1, jc->arg[i].result2);
+		fprintf (jc->out, "%llu %llu\n", jc->arg[i].result1, jc->arg[i].result2);
 	}
 
 	return 0;
