@@ -45,12 +45,33 @@ struct jobcontrol
 	int T;
 };
 
-int women_count (struct jobarg *j,
+static int comp_int (const void *a, const void *b, void *p)
+{
+	int *p1, *p2;
+	int *P = p;
+
+	p1 = (void*)a;
+	p2 = (void*)b;
+
+	//return *p1-*p2;
+	return P[*p2]-P[*p1];
+}
+
+int analize_pos (struct jobarg *j,
 		int start, int count,
-		int *W, int *rpos)
+		int *P, int *W, int *wpos,
+		int *mpos, int *mpos_count,
+		int *_max_man_power,
+		int *_max_man_pos)
 {
 	int i;
 	int ret;
+	int max_man_power = 0;
+	int max_man_pos = 0;
+
+	int local_man_pos = -1;
+	int local_man_power = 0;
+	int local_man_count = 0;
 
 	ret = 0;
 	for (i=0; i<count; i++)
@@ -58,33 +79,90 @@ int women_count (struct jobarg *j,
 		int pos;
 
 		if (!W[i])
-			continue;
+		{
+			//debug ("  man on %d, p%d\n", i+start, P[i]);
 
-		rpos[ret] = i;
+			/* its man */
+			if (P[i] > max_man_power)
+			{
+				max_man_power = P[i];
+				max_man_pos = i;
+			}
+
+			if (P[i] > local_man_power)
+			{
+				local_man_power = P[i];
+				local_man_pos = i;
+			}
+			continue;
+		}
+
+		//debug ("woman on %d, p%d\n", i+start, P[i]);
+
+		/* its woman */
+		if (local_man_pos >= 0)
+		{
+			//debug ("update local max position %d, p%d\n",
+			//		local_man_pos+start, local_man_pos);
+
+			mpos[local_man_count] = local_man_pos;
+			local_man_count ++;
+
+			local_man_power = 0;
+			local_man_pos = -1;
+		}
+
+		wpos[ret] = i;
 		ret ++;
 	}
+
+	if (local_man_pos >= 0)
+	{
+		mpos[local_man_count] = local_man_pos;
+		local_man_count ++;
+	}
+
+	*mpos_count = local_man_count;
+	*_max_man_power = max_man_power;
+	*_max_man_pos = max_man_pos;
+
+	//qsort_r (wpos, ret, sizeof (wpos[0]), comp_int, P);
+	//qsort_r (mpos, local_man_count, sizeof (mpos[0]), comp_int, P);
 
 	return ret;
 }
 
-int get_power (struct jobarg *j, int start, int count,
+static int max_power (struct jobarg *j, int depth, int start, int count, int *P, int *W);
+
+int get_power (struct jobarg *j, int depth, int try, int total, int start, int count,
 		int first, int second, int *P, int *W)
 {
 	int subAsize, subBsize;
 	int maxA, maxB;
 	int power;
 
+	if (first > second)
+	{
+		int t;
+		t = first;
+		first = second;
+		second = t;
+	}
+
 	subAsize = second-first-1;
 	subBsize = count - subAsize - 2;
-	debug ("%4d-%4d check %d and %d, sub section count A %d, B %d\n",
+	debug ("%4d-%4d %d %d/%d check %d and %d, sub section count A %d, B %d\n",
 			start, start + count,
+			depth, try, total,
 			start + first,
 			start + second,
 			subAsize, subBsize);
+	if (j->number == 68 && depth <= 2)
+		printf ("%d. depth%d, %d/%d\n", j->number, depth, try, total);
 
 	maxA = maxB = 0;
 	if (subAsize > 1)
-		maxA = max_power (j, start + first + 1, subAsize,
+		maxA = max_power (j, depth, start + first + 1, subAsize,
 				P+first+1, W+first+1);
 
 	if (subBsize > 1)
@@ -95,12 +173,12 @@ int get_power (struct jobarg *j, int start, int count,
 
 		if (first == 0)
 		{
-			maxB = max_power (j, start + second + 1, subBsize,
+			maxB = max_power (j, depth, start + second + 1, subBsize,
 					P + second + 1, W + second + 1);
 		}
 		else if (tailsize == 0)
 		{
-			maxB = max_power (j, start, subBsize, P, W);
+			maxB = max_power (j, depth, start, subBsize, P, W);
 		}
 		else
 		{
@@ -114,7 +192,7 @@ int get_power (struct jobarg *j, int start, int count,
 			memcpy (subP+tailsize, P, first*sizeof(subP[0]));
 			memcpy (subW+tailsize, W, first*sizeof(subW[0]));
 
-			maxB = max_power (j, start + second + 1, subBsize, subP, subW);
+			maxB = max_power (j, depth, start + second + 1, subBsize, subP, subW);
 
 			free (subP);
 			free (subW);
@@ -124,26 +202,39 @@ int get_power (struct jobarg *j, int start, int count,
 	return P[first]*P[second] + maxA + maxB;
 }
 
-int max_power (struct jobarg *j, int start, int count, int *P, int *W)
+int max_power (struct jobarg *j, int depth, int start, int count, int *P, int *W)
 {
 	int first;
-	int i;
+	int i, w, m;
 	int max = 0;
 	int w_pos[50];
+	int m_pos[51];
 	int w_count;
+	int m_count = 0;
+	int max_man_power = 0;
+	int max_man_pos = 0;
+	int try = 0;
 
-	w_count = women_count (j, start, count, W, w_pos);
+	w_count = analize_pos (j, start, count, P, W, w_pos, m_pos, &m_count, &max_man_power, &max_man_pos);
 	if (w_count == 0)
 	{
-		debug ("%4d-%4d no women\n",
-				start, start + count);
+		//debug ("%4d-%4d no women\n",
+		//		start, start + count);
 		return 0;
 	}
 	if (w_count == count)
 	{
-		debug ("%4d-%4d no man\n",
-				start, start + count);
+		//debug ("%4d-%4d no man\n",
+		//		start, start + count);
 		return 0;
+	}
+	if (w_count == 1)
+	{
+		//debug ("%4d-%4d single woman. give max man %d(%dx%d)\n",
+		//		start, start + count,
+		//		P[w_pos[0]] * max_man_power,
+		//		P[w_pos[0]], max_man_power);
+		return P[w_pos[0]] * max_man_power;
 	}
 
 #ifdef DEBUG
@@ -151,6 +242,7 @@ int max_power (struct jobarg *j, int start, int count, int *P, int *W)
 		char buf[count*5+1];
 		int off;
 
+#if 1
 		off = 0;
 		for (i=0; i<count; i++)
 			off += sprintf (buf+off, " %4d", i+start);
@@ -166,45 +258,41 @@ int max_power (struct jobarg *j, int start, int count, int *P, int *W)
 		debug ("%4d-%4d power %*s%s\n",
 				start, start + count,
 				5*start, "", buf);
+#endif
 
 		off = 0;
 		for (i=0; i<count; i++)
 			off += sprintf (buf+off, " %4d", W[i]);
+			//off += sprintf (buf+off, "%d", W[i]);
 
 		debug ("%4d-%4d woman %*s%s\n",
 				start, start + count,
 				5*start, "", buf);
+				//1*start, "", buf);
 	}
 #endif
 
-	for (i=0; i<w_count; i++)
+	//for (m=0; m<m_count; m++)
+	//m = 0;
 	{
 		int second;
 
-		first = w_pos[i];
+		//first = m_pos[m];
+		first = max_man_pos;
 
-		for (second=0; second<count; second++)
+		for (w=0; w<w_count; w++)
 		{
 			int power;
-			int f, s;
 
-			if (W[second])
-				continue;
+			second = w_pos[w];
 
-			if (first > second)
-			{
-				f = second;
-				s = first;
-			}
-			else
-			{
-				f = first;
-				s = second;
-			}
-
-			power = get_power (j, start, count, f, s, P, W);
+			power = get_power (j, depth+1,
+					try, w_count,
+					start, count, first, second, P, W);
 			if (power > max)
 				max = power;
+
+			try ++;
 		}
 	}
 
@@ -215,12 +303,13 @@ int max_power (struct jobarg *j, int start, int count, int *P, int *W)
 	return max;
 }
 
-void * jobthread (void *arg)
+static void * jobthread (void *arg)
 {
 	struct jobarg *j = arg;
 
 	/* do job */
-	j->result = max_power (j, 0, j->N, j->P, j->W);
+	if (j->number == 68)
+	j->result = max_power (j, 0, 0, j->N, j->P, j->W);
 
 	/* mark we done */
 	pthread_mutex_lock (&j->jc->lock);
@@ -236,7 +325,7 @@ void * jobthread (void *arg)
 	return 0;
 }
 
-int more_job (struct jobcontrol *jc)
+static int more_job (struct jobcontrol *jc)
 {
 	struct jobarg *j;
 	int jn;
@@ -250,7 +339,6 @@ int more_job (struct jobcontrol *jc)
 	j = jc->arg + jn;
 
 	fscanf (jc->in, "%d\n", &j->N);
-	printf ("%d. new job. N %d\n", jn, j->N);
 
 	j->P = calloc (j->N, sizeof (j->P[0]));
 	for (a=0; a<j->N; a++)
@@ -279,6 +367,7 @@ int more_job (struct jobcontrol *jc)
 			j->count_w ++;
 		}
 	}
+	printf ("%d. new job. N %d w%d\n", jn, j->N, j->count_w);
 
 	/* set jobthread argument and run the thread */
 	j->number = jn;
