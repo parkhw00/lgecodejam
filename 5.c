@@ -15,6 +15,42 @@
 #endif
 #define error(f,a...)	printf("%16s.%-4d."f,__func__, __LINE__,##a)
 
+#define list_init(l)		{(l)->next = (l)->prev = (l);}
+#define list_add_before(to,new)	{ \
+	(to)->prev->next = new; \
+	(new)->prev = (to)->prev; \
+	(to)->prev = new; \
+	(new)->next = to; \
+}
+#define list_remove(l)		{ \
+	(l)->prev->next = (l)->next; \
+	(l)->next->prev = (l)->prev; \
+	(l)->next = (l)->prev = NULL; \
+}
+
+struct list
+{
+	struct list *next;
+	struct list *prev;
+
+	void *data;
+};
+
+struct threadpool_arg
+{
+};
+
+struct threadpool_control
+{
+	struct list running;
+	pthread_cond_t jobdone;
+	pthread_mutex_t running_lock;
+};
+
+struct threadpool_control *tp_new_control (int max_thread, int (*thread_func)(void *))
+{
+}
+
 
 struct jobcontrol;
 
@@ -89,38 +125,38 @@ int analize_pos (struct jobarg *j,
 				max_man_pos = i;
 			}
 
-			if (P[i] > local_man_power)
-			{
-				local_man_power = P[i];
-				local_man_pos = i;
-			}
+			//if (P[i] > local_man_power)
+			//{
+			//	local_man_power = P[i];
+			//	local_man_pos = i;
+			//}
 			continue;
 		}
 
 		//debug ("woman on %d, p%d\n", i+start, P[i]);
 
 		/* its woman */
-		if (local_man_pos >= 0)
-		{
+		//if (local_man_pos >= 0)
+		//{
 			//debug ("update local max position %d, p%d\n",
 			//		local_man_pos+start, local_man_pos);
 
-			mpos[local_man_count] = local_man_pos;
-			local_man_count ++;
+		//	mpos[local_man_count] = local_man_pos;
+		//	local_man_count ++;
 
-			local_man_power = 0;
-			local_man_pos = -1;
-		}
+		//	local_man_power = 0;
+		//	local_man_pos = -1;
+		//}
 
 		wpos[ret] = i;
 		ret ++;
 	}
 
-	if (local_man_pos >= 0)
-	{
-		mpos[local_man_count] = local_man_pos;
-		local_man_count ++;
-	}
+	//if (local_man_pos >= 0)
+	//{
+	//	mpos[local_man_count] = local_man_pos;
+	//	local_man_count ++;
+	//}
 
 	*mpos_count = local_man_count;
 	*_max_man_power = max_man_power;
@@ -157,12 +193,13 @@ int get_power (struct jobarg *j, int depth, int try, int total, int start, int c
 			start + first,
 			start + second,
 			subAsize, subBsize);
-	if (j->number == 68 && depth <= 2)
-		printf ("%d. depth%d, %d/%d\n", j->number, depth, try, total);
+	//if (j->number == 68 && depth <= 2)
+	//	printf ("%d. depth%d, %d/%d\n", j->number, depth, try, total);
 
 	maxA = maxB = 0;
 	if (subAsize > 1)
-		maxA = max_power (j, depth, start + first + 1, subAsize,
+		maxA = max_power (j, depth,
+				start + first + 1, subAsize,
 				P+first+1, W+first+1);
 
 	if (subBsize > 1)
@@ -173,12 +210,15 @@ int get_power (struct jobarg *j, int depth, int try, int total, int start, int c
 
 		if (first == 0)
 		{
-			maxB = max_power (j, depth, start + second + 1, subBsize,
+			maxB = max_power (j, depth,
+					start + second + 1, subBsize,
 					P + second + 1, W + second + 1);
 		}
 		else if (tailsize == 0)
 		{
-			maxB = max_power (j, depth, start, subBsize, P, W);
+			maxB = max_power (j, depth,
+					start, subBsize,
+					P, W);
 		}
 		else
 		{
@@ -192,7 +232,9 @@ int get_power (struct jobarg *j, int depth, int try, int total, int start, int c
 			memcpy (subP+tailsize, P, first*sizeof(subP[0]));
 			memcpy (subW+tailsize, W, first*sizeof(subW[0]));
 
-			maxB = max_power (j, depth, start + second + 1, subBsize, subP, subW);
+			maxB = max_power (j, depth,
+					start + second + 1, subBsize,
+					subP, subW);
 
 			free (subP);
 			free (subW);
@@ -308,7 +350,7 @@ static void * jobthread (void *arg)
 	struct jobarg *j = arg;
 
 	/* do job */
-	if (j->number == 68)
+	//if (j->number == 68)
 	j->result = max_power (j, 0, 0, j->N, j->P, j->W);
 
 	/* mark we done */
