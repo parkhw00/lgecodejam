@@ -9,11 +9,11 @@
 #define THREADS	4
 #define debug(f,a...)	do{}while(0)
 #else
-//#define DEBUG
+#define DEBUG
 #define THREADS	1
-#define debug(f,a...)	printf("%s.%d."f,__func__, __LINE__,##a)
+#define debug(f,a...)	printf("%16s.%-4d."f,__func__, __LINE__,##a)
 #endif
-#define error(f,a...)	printf("%s.%d."f,__func__, __LINE__,##a)
+#define error(f,a...)	printf("%16s.%-4d."f,__func__, __LINE__,##a)
 
 
 #define list_next(j,l)			(j->city_list[(l)->number].next)
@@ -41,6 +41,8 @@ struct jobarg
 	unsigned long long result;
 
 	int N;
+
+	int *P, *S;
 };
 
 struct jobcontrol
@@ -56,6 +58,132 @@ struct jobcontrol
 	int T;
 };
 
+int max_power (struct jobarg *j, int size, int *P, int *S
+#ifdef DEBUG
+		, int debug_start
+#endif
+		)
+{
+	int first;
+	int max = 0;
+
+#ifdef DEBUG
+	debug_start %= j->N;
+	{
+		int i;
+		char buf[size*5+1];
+		int off;
+
+		off = 0;
+		for (i=0; i<size; i++)
+			off += sprintf (buf+off, " %4d", P[i]);
+
+		debug ("%4d-%4d power %*s%s\n",
+				debug_start, debug_start + size,
+				5*debug_start, "", buf);
+
+		off = 0;
+		for (i=0; i<size; i++)
+			off += sprintf (buf+off, " %4d", S[i]);
+
+		debug ("%4d-%4d sex   %*s%s\n",
+				debug_start, debug_start + size,
+				5*debug_start, "", buf);
+	}
+#endif
+
+	for (first=0; first<size-1; first++)
+	{
+		int second;
+
+		for (second=first+1; second<size; second++)
+		{
+			int diff_sex;
+			int subAsize, subBsize;
+			int maxA, maxB;
+			int power;
+
+			debug ("%4d-%4d check %d and %d\n",
+					debug_start, debug_start + size,
+					debug_start + first,
+					debug_start + second);
+
+			diff_sex = S[first] ^ S[second];
+			if (!diff_sex)
+				continue;
+
+			subAsize = second-first-1;
+			subBsize = size - subAsize - 2;
+			debug ("%4d-%4d sub section size A %d, B %d\n",
+					debug_start, debug_start + size,
+					subAsize, subBsize);
+
+			maxA = maxB = 0;
+			if (subAsize > 1)
+				maxA = max_power (j, subAsize, P+first+1, S+first+1
+#ifdef DEBUG
+						, debug_start + first + 1
+#endif
+						);
+
+			if (subBsize > 1)
+			{
+				int tailsize;
+
+				tailsize = size-first-subAsize-2;
+
+				if (first == 0)
+				{
+					maxB = max_power (j, subBsize, P + second + 1, S + second + 1
+#ifdef DEBUG
+							, debug_start + second + 1
+#endif
+							);
+				}
+				else if (tailsize == 0)
+				{
+					maxB = max_power (j, subBsize, P, S
+#ifdef DEBUG
+							, 0
+#endif
+							);
+				}
+				else
+				{
+					int *subP, *subS;
+
+					subP = malloc (subBsize*sizeof (subP[0]));
+					subS = malloc (subBsize*sizeof (subS[0]));
+
+					memcpy (subP, P+first+subAsize+2, tailsize);
+					memcpy (subS, S+first+subAsize+2, tailsize);
+					memcpy (subP+tailsize, P, first);
+					memcpy (subS+tailsize, S, first);
+
+					maxB = max_power (j, subBsize, subP, subS
+#ifdef DEBUG
+							, debug_start + second + 1
+#endif
+							);
+
+					free (subP);
+					free (subS);
+				}
+			}
+
+			power = P[first]*P[second] + maxA + maxB;
+			if (power > max)
+				max = power;
+		}
+	}
+
+	debug ("%4d-%4d max %d\n",
+			debug_start, debug_start + size,
+			max);
+
+	return max;
+}
+
 void * jobthread (void *arg)
 {
 	struct jobarg *j = arg;
@@ -63,6 +191,11 @@ void * jobthread (void *arg)
 	int a;
 
 	/* do job */
+	j->result = max_power (j, j->N, j->P, j->S
+#ifdef DEBUG
+			, 0
+#endif
+			);
 
 	/* mark we done */
 	pthread_mutex_lock (&j->jc->lock);
@@ -92,12 +225,27 @@ int more_job (struct jobcontrol *jc)
 	fscanf (jc->in, "%d\n", &j->N);
 	printf ("%d. new job. N %d\n", jn, j->N);
 
+	j->P = calloc (j->N, sizeof (j->P[0]));
 	for (a=0; a<j->N; a++)
 	{
-		int num;
+		int p;
 
-		num = 0;
-		fscanf (jc->in, "%d", &num);
+		p = 0;
+		fscanf (jc->in, "%d", &p);
+
+		j->P[a] = p;
+	}
+
+
+	j->S = calloc (j->N, sizeof (j->S[0]));
+	for (a=0; a<j->N; a++)
+	{
+		int s;
+
+		s = 0;
+		fscanf (jc->in, "%d", &s);
+
+		j->S[a] = s;
 	}
 
 	/* set jobthread argument and run the thread */
