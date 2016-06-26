@@ -155,10 +155,10 @@ int max_power (struct jobarg *j, int size, int *P, int *S
 					subP = malloc (subBsize*sizeof (subP[0]));
 					subS = malloc (subBsize*sizeof (subS[0]));
 
-					memcpy (subP, P+first+subAsize+2, tailsize);
-					memcpy (subS, S+first+subAsize+2, tailsize);
-					memcpy (subP+tailsize, P, first);
-					memcpy (subS+tailsize, S, first);
+					memcpy (subP, P+first+subAsize+2, tailsize*sizeof(subP[0]));
+					memcpy (subS, S+first+subAsize+2, tailsize*sizeof(subS[0]));
+					memcpy (subP+tailsize, P, first*sizeof(subP[0]));
+					memcpy (subS+tailsize, S, first*sizeof(subS[0]));
 
 					maxB = max_power (j, subBsize, subP, subS
 #ifdef DEBUG
@@ -188,8 +188,6 @@ void * jobthread (void *arg)
 {
 	struct jobarg *j = arg;
 
-	int a;
-
 	/* do job */
 	j->result = max_power (j, j->N, j->P, j->S
 #ifdef DEBUG
@@ -205,6 +203,8 @@ void * jobthread (void *arg)
 	pthread_cond_signal (&j->jc->jobdone);
 
 	/* cleanup not used memory */
+	free (j->P);
+	free (j->S);
 
 	return 0;
 }
